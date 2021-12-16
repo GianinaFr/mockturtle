@@ -35,6 +35,7 @@
 #include <kitty/constructors.hpp>
 #include <kitty/dynamic_truth_table.hpp>
 #include <kitty/operations.hpp>
+#include <cmath>
 
 #include "../utils/node_map.hpp"
 #include "miter.hpp"
@@ -74,11 +75,93 @@ public:
   bool run()
   {
     /* TODO: write your implementation here */
-    return false;
+
+    /* COMPUTATION OF SPLIT_VAR AND ROUNDS */
+    compute_st( );
+
+    /* PATTERN INITIALIZATION */
+    pattern_t node_to_value( _ntk );
+    pattern_initialization( node_to_value );
+
+    /* FIRST SIMULATION ROUND */
+    default_simulator<kitty::dynamic_truth_table> sim( _st.split_var );
+    simulate_nodes( _ntk, node_to_value, sim );
+    if ( !equivalence_check( node_to_value ) ) return false;
+
+    /* OTHER ROUNDS */
+    for ( uint32_t it = 1; it <= _st.rounds - 1; ++it )
+    {
+      clean_pattern( node_to_value );
+      update_pattern( node_to_value, it );
+      simulate_nodes( _ntk, node_to_value, sim );
+      if ( !equivalence_check( node_to_value ) ) return false;
+    }
+
+    return true;
   }
 
 private:
   /* you can add additional methods here */
+
+  void compute_st( ){
+    if (_ntk.num_pis() < 7) _st.split_var = _ntk.num_pis();
+    else
+    {
+      for (uint32_t m = 7; m <= _ntk.num_pis(); ++m)
+      {
+        if (32 + std::pow(2, m - 3) * _ntk.size() < std::pow(2, 29)) _st.split_var = m;
+      }
+    }
+    _st.rounds = std::pow( 2, _ntk.num_pis() - _st.split_var );
+  }
+
+  void pattern_initialization( pattern_t& node_to_value ){
+    _ntk.foreach_pi( [&]( auto const& n, auto i )
+    {
+      kitty::dynamic_truth_table tt ( _st.split_var );
+      if ( i < _st.split_var ) kitty::create_nth_var( tt, i );
+      node_to_value[n] = tt;
+    } );
+  }
+
+  bool equivalence_check( pattern_t& node_to_value ){
+    bool check = true;
+    _ntk.foreach_po( [&]( auto const& n )
+    {
+       if ( _ntk.is_complemented( n ) )
+       {
+         if ( !is_const0(~node_to_value[n]) ) check = false;
+       }
+       else
+       {
+         if ( !is_const0(node_to_value[n]) ) check = false;
+       }
+     } );
+     return check;
+  }
+
+  void clean_pattern( pattern_t& node_to_value ){
+    _ntk.foreach_gate( [&]( auto const& n )
+    {
+       node_to_value.erase(n);
+    } );
+  }
+
+  void update_pattern( pattern_t& node_to_value, uint32_t& it ){
+    uint32_t k = it;
+    _ntk.foreach_pi( [&]( auto const& n, auto i )
+    {
+      if (i >= _st.split_var ){
+        if (k % 2 == 1){
+          if ( is_const0(node_to_value[n]) ) node_to_value[n] = ~node_to_value[n];
+        }
+        else{
+          if ( !is_const0(node_to_value[n]) ) node_to_value[n] = ~node_to_value[n];
+        }
+        k /= 2;
+      }
+    } );
+  }
 
 private:
   Ntk& _ntk;
